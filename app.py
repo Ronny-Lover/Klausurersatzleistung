@@ -294,6 +294,4 @@ else:
                     min(place["players"] / 10, 1.0),
                     text="Beispiel-Auslastung",
                 )
-                st.button("Details", key=f"details_{index}")astung",
-                )
                 st.button("Details", key=f"details_{index}")
