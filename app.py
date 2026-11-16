@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 BASE_DIR = Path(__file__).parent
-MODEL_PATH = BASE_DIR / "models" / "bolzplatz_model.h5"
+MODEL_PATH = BASE_DIR / "bolzplatz_model.h5"
 LABELS_PATH = BASE_DIR / "labels.txt"
 IMAGE_SIZE = 224  # Muss zur Eingabegröße deines Modells passen.
 
