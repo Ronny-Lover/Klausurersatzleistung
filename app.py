@@ -1,5 +1,9 @@
+import os
+import tempfile
+
 import streamlit as st
-import streamlit.components.v1 as components
+from gradio_client import Client, handle_file
+from PIL import Image
 
 st.set_page_config(
     page_title="Bolzplatzradar",
@@ -54,8 +58,14 @@ PLACES = [
 ]
 
 
+@st.cache_resource
+def get_huggingface_client():
+    """Verbindet sich mit dem Crowd Density Analyzer auf Hugging Face."""
+    return Client("peehugahlot05/crowd-density-analyzer")
+
+
 def occupancy_from_demo_players(players):
-    """Demo-Einteilung anhand der Beispiel-Spielerzahl."""
+    """Demo-Einteilung für die Beispielplätze."""
     if players <= 1:
         return "Leer"
     if players <= 3:
@@ -72,6 +82,31 @@ def occupancy_color(level):
         "Mittel": "#d18b00",
         "Voll": "#c83d3d",
     }.get(level, "#667085")
+
+
+def show_api_image(image_result, caption):
+    """Zeigt ein Bild an, das die Gradio-API zurückgegeben hat."""
+    if not image_result:
+        st.info(f"{caption}: kein Bild zurückgegeben.")
+        return
+
+    if isinstance(image_result, dict):
+        image_path = image_result.get("path")
+        image_url = image_result.get("url")
+
+        if image_path and os.path.exists(image_path):
+            st.image(image_path, caption=caption, use_container_width=True)
+        elif image_url:
+            st.image(image_url, caption=caption, use_container_width=True)
+        else:
+            st.info(f"{caption}: Bilddatei nicht verfügbar.")
+    elif isinstance(image_result, str):
+        if os.path.exists(image_result):
+            st.image(image_result, caption=caption, use_container_width=True)
+        else:
+            st.image(image_result, caption=caption, use_container_width=True)
+    else:
+        st.info(f"{caption}: unbekanntes Bildformat.")
 
 
 # Kopfbereich
@@ -92,7 +127,7 @@ st.markdown(
 
 st.write("")
 
-# Suche und Filter in der Seitenleiste
+# Suche und Filter
 with st.sidebar:
     st.subheader("📍 Platz suchen")
     search = st.text_input("Ort oder Platzname", placeholder="z. B. Kreuzberg")
@@ -110,17 +145,80 @@ with st.sidebar:
     st.caption("Die Platzangaben in diesem Prototyp sind Demodaten.")
 
 
-# Eingebettete Hugging Face Space
-st.subheader("📷 Auslastung mit dem Crowd Density Analyzer prüfen")
-st.caption(
-    "Der Analyzer läuft als separate Hugging Face-App innerhalb dieser Seite."
+# Fotoanalyse: Das Foto wird an den Hugging Face Space gesendet.
+st.subheader("📷 Bolzplatzfoto analysieren")
+st.write(
+    "Lade ein Foto hoch. Der Crowd Density Analyzer erkennt Personen "
+    "und zeigt seine Analysebilder hier an."
 )
 
-components.iframe(
-    "https://peehugahlot05-crowd-density-analyzer.hf.space",
-    height=800,
-    scrolling=True,
+uploaded_photo = st.file_uploader(
+    "Platzfoto auswählen",
+    type=["jpg", "jpeg", "png"],
+    key="place_photo",
 )
+
+if uploaded_photo is not None:
+    try:
+        photo = Image.open(uploaded_photo).convert("RGB")
+        st.image(
+            photo,
+            caption="Ausgewähltes Foto",
+            width=500,
+        )
+
+        if st.button("Foto analysieren", type="primary"):
+            try:
+                client = get_huggingface_client()
+
+                # Gradio benötigt für den Upload einen Dateipfad.
+                with tempfile.NamedTemporaryFile(
+                    suffix=".jpg",
+                    delete=False,
+                ) as temp_file:
+                    photo.save(temp_file.name, format="JPEG")
+                    temp_path = temp_file.name
+
+                try:
+                    with st.spinner(
+                        "Das Foto wird vom Crowd Density Analyzer ausgewertet..."
+                    ):
+                        result = client.predict(
+                            image=handle_file(temp_path),
+                            api_name="/analyze",
+                        )
+                finally:
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+
+                if not isinstance(result, (list, tuple)) or len(result) < 4:
+                    st.error("Der Analyzer hat ein unerwartetes Ergebnis geliefert.")
+                else:
+                    st.subheader("Analyseergebnis")
+
+                    # API-Ausgabe 0: HTML-Auswertung
+                    if result[0]:
+                        st.markdown(
+                            str(result[0]),
+                            unsafe_allow_html=True,
+                        )
+
+                    # API-Ausgabe 2: YOLO-Erkennungsbild
+                    # API-Ausgabe 3: CSRNet-Heatmap
+                    result_col1, result_col2 = st.columns(2)
+
+                    with result_col1:
+                        show_api_image(result[2], "YOLO Detection")
+
+                    with result_col2:
+                        show_api_image(result[3], "CSRNet Heatmap")
+
+            except Exception as exc:
+                st.error(f"Die Analyse ist fehlgeschlagen: {exc}")
+
+    except Exception as exc:
+        st.error(f"Das Foto konnte nicht geöffnet werden: {exc}")
+
 
 st.divider()
 
@@ -195,5 +293,7 @@ else:
                 st.progress(
                     min(place["players"] / 10, 1.0),
                     text="Beispiel-Auslastung",
+                )
+                st.button("Details", key=f"details_{index}")astung",
                 )
                 st.button("Details", key=f"details_{index}")
