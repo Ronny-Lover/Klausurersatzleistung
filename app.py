@@ -1,9 +1,5 @@
-from pathlib import Path
-
-import numpy as np
 import streamlit as st
-import tensorflow as tf
-from PIL import Image
+import streamlit.components.v1 as components
 
 st.set_page_config(
     page_title="Bolzplatzradar",
@@ -11,12 +7,7 @@ st.set_page_config(
     layout="wide",
 )
 
-BASE_DIR = Path(__file__).parent
-MODEL_PATH = BASE_DIR / "bolzplatz_model.h5"
-LABELS_PATH = BASE_DIR / "labels.txt"
-IMAGE_SIZE = 224  # Muss zur Eingabegröße deines Modells passen.
-
-# Beispielplätze: später durch echte Daten aus einer Datenbank/API ersetzen.
+# Beispielplätze – später durch echte Daten aus einer Datenbank/API ersetzen.
 PLACES = [
     {
         "name": "Bolzplatz am Gleisdreieck",
@@ -63,55 +54,8 @@ PLACES = [
 ]
 
 
-def load_labels():
-    """Lädt die Klassen in der Reihenfolge aus labels.txt."""
-    if not LABELS_PATH.exists():
-        return ["Leer", "Wenig", "Mittel", "Voll"]
-
-    with open(LABELS_PATH, "r", encoding="utf-8") as file:
-        labels = [line.strip() for line in file if line.strip()]
-
-    return labels or ["Leer", "Wenig", "Mittel", "Voll"]
-
-
-@st.cache_resource
-def load_model():
-    """Lädt das fest im Projekt hinterlegte Keras-Modell."""
-    if not MODEL_PATH.exists():
-        raise FileNotFoundError(f"Modell nicht gefunden: {MODEL_PATH}")
-
-    return tf.keras.models.load_model(MODEL_PATH, compile=False)
-
-
-def predict_occupancy(image, model, labels):
-    """
-    Klassifiziert ein Foto.
-
-    Passe Größe und Normalisierung an, falls dein Modell beim Training
-    eine andere Bildvorverarbeitung verwendet hat.
-    """
-    image = image.convert("RGB").resize((IMAGE_SIZE, IMAGE_SIZE))
-    image_array = np.asarray(image, dtype=np.float32) / 255.0
-    image_array = np.expand_dims(image_array, axis=0)
-
-    prediction = np.asarray(
-        model.predict(image_array, verbose=0)
-    ).reshape(-1)
-
-    if len(prediction) != len(labels):
-        raise ValueError(
-            f"Das Modell gibt {len(prediction)} Werte aus, "
-            f"aber labels.txt enthält {len(labels)} Klassen."
-        )
-
-    class_index = int(np.argmax(prediction))
-    confidence = float(prediction[class_index])
-
-    return labels[class_index], confidence
-
-
 def occupancy_from_demo_players(players):
-    """Demo-Einteilung für die Beispielkarten."""
+    """Demo-Einteilung anhand der Beispiel-Spielerzahl."""
     if players <= 1:
         return "Leer"
     if players <= 3:
@@ -121,22 +65,13 @@ def occupancy_from_demo_players(players):
     return "Voll"
 
 
-def occupancy_color(label):
+def occupancy_color(level):
     return {
         "Leer": "#17803d",
         "Wenig": "#70a943",
         "Mittel": "#d18b00",
         "Voll": "#c83d3d",
-    }.get(label, "#667085")
-
-
-# Modell beim Start laden. Es gibt keinen Modell-Upload in der Benutzeroberfläche.
-try:
-    model = load_model()
-    model_error = None
-except Exception as exc:
-    model = None
-    model_error = str(exc)
+    }.get(level, "#667085")
 
 
 # Kopfbereich
@@ -157,16 +92,7 @@ st.markdown(
 
 st.write("")
 
-if model is None:
-    st.warning(
-        "Das KI-Modell ist gerade nicht verfügbar. "
-        "Prüfe, ob models/bolzplatz_model.h5 im Projekt liegt."
-    )
-    with st.expander("Technische Information"):
-        st.code(model_error or "Unbekannter Fehler")
-
-
-# Suche und Filter
+# Suche und Filter in der Seitenleiste
 with st.sidebar:
     st.subheader("📍 Platz suchen")
     search = st.text_input("Ort oder Platzname", placeholder="z. B. Kreuzberg")
@@ -180,51 +106,23 @@ with st.sidebar:
     surfaces = ["Alle"] + sorted({place["surface"] for place in PLACES})
     surface_filter = st.selectbox("Untergrund", surfaces)
 
+    st.divider()
+    st.caption("Die Platzangaben in diesem Prototyp sind Demodaten.")
 
-# Foto-Upload und Vorhersage
-with st.expander("📷 Foto eines Bolzplatzes hochladen"):
-    st.caption(
-        "Das Foto wird mit dem im Projekt hinterlegten Modell ausgewertet. "
-        "Es wird durch diesen Demo-Code nicht dauerhaft gespeichert."
-    )
 
-    uploaded_photo = st.file_uploader(
-        "Platzfoto auswählen",
-        type=["jpg", "jpeg", "png"],
-        key="place_photo",
-    )
+# Eingebettete Hugging Face Space
+st.subheader("📷 Auslastung mit dem Crowd Density Analyzer prüfen")
+st.caption(
+    "Der Analyzer läuft als separate Hugging Face-App innerhalb dieser Seite."
+)
 
-    if uploaded_photo is not None:
-        try:
-            photo = Image.open(uploaded_photo).convert("RGB")
-            st.image(
-                photo,
-                caption="Ausgewähltes Platzfoto",
-                use_container_width=True,
-            )
+components.iframe(
+    "https://peehugahlot05-crowd-density-analyzer.hf.space",
+    height=800,
+    scrolling=True,
+)
 
-            if model is not None:
-                if st.button("Auslastung schätzen"):
-                    labels = load_labels()
-
-                    try:
-                        prediction_label, confidence = predict_occupancy(
-                            photo,
-                            model,
-                            labels,
-                        )
-                        st.success(
-                            f"Geschätzte Auslastung: **{prediction_label}** "
-                            f"(Modell-Konfidenz: {confidence:.0%})"
-                        )
-                    except Exception as exc:
-                        st.error(f"Die Vorhersage ist fehlgeschlagen: {exc}")
-            else:
-                st.info("Die Schätzung ist nicht verfügbar, solange das Modell fehlt.")
-
-        except Exception as exc:
-            st.error(f"Das Foto konnte nicht geöffnet werden: {exc}")
-
+st.divider()
 
 # Platzliste
 st.subheader("Bolzplätze in deiner Nähe")
